@@ -188,7 +188,7 @@ export default function App() {
     return localStorage.getItem('unpolished_about_name_en') || 'Yang Yi, Spatial Architect';
   });
   const [aboutBioZh, setAboutBioZh] = useState<string>(() => {
-    return localStorage.getItem('unpolished_about_bio_zh') || '杨艺，本科毕业于伦敦艺术大学坎伯韦尔艺术学院。\n\n以建筑结构原真（Tectonic Honesty）与受力自洽为研究核心，探索极限曲率体量与原材料本原状态的高难度交叠。';
+    return localStorage.getItem('unpolished_about_bio_zh') || '杨艺，本科就读于伦敦艺术大学坎伯韦尔艺术学院。\n\n以建筑结构原真（Tectonic Honesty）与受力自洽为研究核心，探索极限曲率体量与原材料本原状态的高难度交叠。';
   });
   const [aboutBioEn, setAboutBioEn] = useState<string>(() => {
     return localStorage.getItem('unpolished_about_bio_en') || 'Yang Yi graduated from Camberwell College of Arts, University of the Arts London.\n\nHis practice centers on structural truth (Tectonic Honesty) and force self-consistency, testing critical curvature volumes integrated with the primordial properties of raw matter.';
