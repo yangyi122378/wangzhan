@@ -1,0 +1,7 @@
+{
+  "name": "“不成器”研究所 - 杨艺作品集",
+  "description": "杨艺 (Yang Yi) 的个人艺术与建筑作品集网站，名为 “不成器”研究所。采用极简学术美学与精美的垂直网格流布局。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"],
+  "overwrite": true
+}
