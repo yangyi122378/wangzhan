@@ -1344,7 +1344,7 @@ export default function App() {
             <div className="space-y-3">
               <div className="space-y-1">
                 <label className="block text-[9px] text-[#8c887a] uppercase tracking-wider">
-                  {lang === 'ZH' ? '访问密码 (默认: camberwell)' : 'PASSWORD (Default: camberwell)'}
+                  {lang === 'ZH' ? '访问密码 (默认: 1234)' : 'PASSWORD (Default: 1234)'}
                 </label>
                 <input 
                   type="password" 
