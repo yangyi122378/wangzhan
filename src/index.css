@@ -21,3 +21,14 @@ body {
   animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Fix mobile devices rendering in grayscale with no hover support */
+@media (hover: none), (pointer: coarse) {
+  .grayscale {
+    filter: grayscale(0) !important;
+  }
+  .group-hover\:grayscale-0 {
+    filter: grayscale(0) !important;
+  }
+}
+
+

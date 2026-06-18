@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Plus, Languages, Trash2, X, Send, Loader2, Sparkles, HelpCircle, Lock, Unlock, Key
 } from 'lucide-react';
@@ -110,6 +111,7 @@ const PRESETS = [
 ];
 
 export default function App() {
+  const [isIntroActive, setIsIntroActive] = useState(true);
   const [lang, setLang] = useState<'ZH' | 'EN'>('ZH');
   const [activeCategory, setActiveCategory] = useState<'ALL' | 'ARCHITECTURE' | 'INTERIOR' | 'OBJECTS' | 'ABOUT'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -233,8 +235,17 @@ export default function App() {
     });
   };
 
+  // Intro screen auto-close for the luxurious opening animation
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsIntroActive(false);
+    }, 2200);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Sync to local storage
   useEffect(() => {
+    localStorage.setItem('unpolished_portfolio_projects_v20', JSON.stringify(projects));
     localStorage.setItem('unpolished_portfolio_projects_v20', JSON.stringify(projects));
   }, [projects]);
 
@@ -504,6 +515,71 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#faf9f6] text-[#111112] font-sans antialiased flex flex-col selection:bg-[#111112] selection:text-white pb-20">
       
+      {/* LUXURIOUS MINIMAL INTRO SCREEN */}
+      <AnimatePresence>
+        {isIntroActive && (
+          <motion.div
+            key="studio-intro"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed inset-0 bg-[#faf9f6]/98 z-[9999] flex flex-col justify-between p-8 md:p-16 select-none pointer-events-none"
+          >
+            {/* Top Indicator */}
+            <div className="flex justify-between items-center text-[9px] tracking-[0.25em] text-[#8c887a] font-mono uppercase">
+              <span>[ u-studio / collective archives ]</span>
+              <span>2026 EDITION</span>
+            </div>
+
+            {/* Center Content: Pure Tectonic Geometry */}
+            <div className="flex flex-col items-center justify-center gap-8 py-20 text-center">
+              <motion.div
+                initial={{ rotate: 0, scale: 0.9, opacity: 0 }}
+                animate={{ rotate: 180, scale: 1, opacity: 1 }}
+                transition={{ duration: 1.8, ease: [0.16, 1, 0.3, 1] }}
+                className="w-12 h-12 border border-[#111112]/15 flex items-center justify-center relative"
+              >
+                <div className="absolute w-4 h-4 border-l border-t border-[#111112]/30 top-0 left-0"></div>
+                <div className="absolute w-4 h-4 border-r border-b border-[#111112]/30 bottom-0 right-0"></div>
+                <span className="text-[10px] font-sans text-[#111112]/40">⎔</span>
+              </motion.div>
+
+              <div className="space-y-3">
+                <motion.h2 
+                  initial={{ opacity: 0, letterSpacing: "0.1em" }}
+                  animate={{ opacity: 1, letterSpacing: "0.3em" }}
+                  transition={{ delay: 0.2, duration: 1.2, ease: "easeOut" }}
+                  className="text-xl md:text-2xl font-extrabold text-[#111112] uppercase"
+                >
+                  ”不成器“ 研究所
+                </motion.h2>
+                <motion.p 
+                  initial={{ opacity: 0, letterSpacing: "0.2em" }}
+                  animate={{ opacity: 1, letterSpacing: "0.41em" }}
+                  transition={{ delay: 0.4, duration: 1.2, ease: "easeOut" }}
+                  className="text-[10px] md:text-xs text-[#8c887a] font-medium uppercase font-mono pl-1.5"
+                >
+                  UNPOLISHED STUDIO
+                </motion.p>
+              </div>
+
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: 140 }}
+                transition={{ delay: 0.5, duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
+                className="h-[1px] bg-[#111112]/20"
+              />
+            </div>
+
+            {/* Bottom Credit */}
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-[9px] tracking-[0.2em] text-[#8c887a] font-mono uppercase text-center md:text-left">
+              <div>TECTONIC HONESTY • FORM IN DEPTH</div>
+              <div>© 2026 PRESENTED BY YANG YI</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* HEADER: STRICTLY MINIMAL, NO REDUNDANT BORDERS */}
       <header className="px-8 py-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 animate-fade-in">
         
