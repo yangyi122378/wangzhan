@@ -101,6 +101,14 @@ function sanitizeProject(p: any): Project {
   };
 }
 
+const PRESETS = [
+  "https://images.unsplash.com/photo-1544984243-ec57ea16fe25?auto=format&fit=crop&q=80&w=800",
+  "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&q=80&w=800",
+  "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&q=80&w=800",
+  "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&q=80&w=800",
+  "https://images.unsplash.com/photo-1613490493576-7fde63acd811?auto=format&fit=crop&q=80&w=800"
+];
+
 export default function App() {
   const [lang, setLang] = useState<'ZH' | 'EN'>('ZH');
   const [activeCategory, setActiveCategory] = useState<'ALL' | 'ARCHITECTURE' | 'INTERIOR' | 'OBJECTS' | 'ABOUT'>('ALL');
@@ -140,7 +148,7 @@ export default function App() {
   const [creationArea, setCreationArea] = useState('');
   const [creationMaterial, setCreationMaterial] = useState('');
   const [creationTectonics, setCreationTectonics] = useState('');
-  const [selectedPresetImage, setSelectedPresetImage] = useState<string>('');
+  const [selectedPresetImage, setSelectedPresetImage] = useState<string>(PRESETS[0]);
 
   // Project detail editing states
   const [isEditingProj, setIsEditingProj] = useState(false);
@@ -178,10 +186,10 @@ export default function App() {
     return localStorage.getItem('unpolished_about_name_en') || 'Yang Yi, Spatial Architect';
   });
   const [aboutBioZh, setAboutBioZh] = useState<string>(() => {
-    return localStorage.getItem('unpolished_about_bio_zh') || '杨艺，本科毕业于伦敦艺术大学坎伯韦尔艺术学院。';
+    return localStorage.getItem('unpolished_about_bio_zh') || '杨艺，本科毕业于伦敦艺术大学坎伯韦尔艺术学院。\n\n以建筑结构原真（Tectonic Honesty）与受力自洽为研究核心，探索极限曲率体量与原材料本原状态的高难度交叠。';
   });
   const [aboutBioEn, setAboutBioEn] = useState<string>(() => {
-    return localStorage.getItem('unpolished_about_bio_en') || 'Yang Yi graduated from Camberwell College of Arts, University of the Arts London.';
+    return localStorage.getItem('unpolished_about_bio_en') || 'Yang Yi graduated from Camberwell College of Arts, University of the Arts London.\n\nHis practice centers on structural truth (Tectonic Honesty) and force self-consistency, testing critical curvature volumes integrated with the primordial properties of raw matter.';
   });
   const [isEditingAbout, setIsEditingAbout] = useState(false);
   const [tempAboutNameZh, setTempAboutNameZh] = useState('');
@@ -200,18 +208,72 @@ export default function App() {
     }
   };
 
+  const uploadImageFile = async (file: File): Promise<string> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.url) {
+          return data.url;
+        }
+      }
+    } catch (e) {
+      console.warn("Cloudflare R2-upload failed or API not configured, falling back to base64 encoding", e);
+    }
+    // Fallback to FileReader base64 encoding
+    return new Promise<string>((resolve) => {
+      const r = new FileReader();
+      r.onload = ev => resolve(ev.target?.result as string);
+      r.readAsDataURL(file);
+    });
+  };
+
   // Sync to local storage
   useEffect(() => {
     localStorage.setItem('unpolished_portfolio_projects_v20', JSON.stringify(projects));
   }, [projects]);
 
-  // Reset password to default 'camberwell' if it was previously customized
+  // Load from Cloudflare D1 on mount (with automatic pre-population if empty)
   useEffect(() => {
-    const saved = localStorage.getItem('unpolished_admin_password');
-    if (saved && saved.toLowerCase() !== 'camberwell') {
-      localStorage.setItem('unpolished_admin_password', 'camberwell');
-      setAdminPassword('camberwell');
-    }
+    const fetchRemoteProjects = async () => {
+      try {
+        const res = await fetch('/api/projects');
+        if (res.ok) {
+          const apiProjects = await res.json();
+          if (Array.isArray(apiProjects)) {
+            if (apiProjects.length > 0) {
+              setProjects(apiProjects);
+            } else {
+              // Remote is connected but completely empty, let's pre-populate it with INITIAL_PROJECTS
+              console.log("Remote D1 database is empty. Pre-populating with default architect portfolio items...");
+              for (const p of INITIAL_PROJECTS) {
+                await fetch('/api/projects', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(p)
+                });
+              }
+              // Refetch populated data
+              const freshRes = await fetch('/api/projects');
+              if (freshRes.ok) {
+                const freshProjects = await freshRes.json();
+                if (Array.isArray(freshProjects) && freshProjects.length > 0) {
+                  setProjects(freshProjects);
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch remote projects from Cloudflare D1, falling back to local storage:", err);
+      }
+    };
+    fetchRemoteProjects();
   }, []);
 
   useEffect(() => {
@@ -220,6 +282,104 @@ export default function App() {
     localStorage.setItem('unpolished_about_bio_zh', aboutBioZh);
     localStorage.setItem('unpolished_about_bio_en', aboutBioEn);
   }, [aboutNameZh, aboutNameEn, aboutBioZh, aboutBioEn]);
+
+  const handleCreateNewWork = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!creationTitle.trim()) return;
+
+    const newProj: Project = {
+      id: `proj-${Math.random().toString(36).substring(2, 9)}`,
+      title: creationTitle,
+      titleEn: creationTitleEn || creationTitle,
+      category: creationCategory,
+      location: creationLocation || (lang === 'ZH' ? '伦敦' : 'London'),
+      locationEn: creationLocationEn || creationLocation || 'London',
+      year: creationYear,
+      image: selectedPresetImage || PRESETS[0],
+      images: [selectedPresetImage || PRESETS[0]],
+      details: {
+        area: creationArea || '30㎡',
+        material: creationMaterial || '未设定 (Not Specified)',
+        tectonics: creationTectonics || '这里是学术构造说明。'
+      }
+    };
+
+    setProjects(prev => [newProj, ...prev]);
+    setIsCreateOpen(false);
+
+    // Sync to Cloudflare D1
+    try {
+      await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProj)
+      });
+    } catch (err) {
+      console.warn("Could not sync added project to Cloudflare D1:", err);
+    }
+    
+    // Reset inputs
+    setCreationTitle('');
+    setCreationTitleEn('');
+    setCreationCategory('ARCHITECTURE');
+    setCreationLocation('');
+    setCreationLocationEn('');
+    setCreationYear('2026');
+    setCreationArea('');
+    setCreationMaterial('');
+    setCreationTectonics('');
+    setSelectedPresetImage(PRESETS[0]);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedProject || !editTitle.trim()) return;
+
+    const updated: Project = {
+      ...selectedProject,
+      title: editTitle,
+      titleEn: editTitleEn || editTitle,
+      year: editYear,
+      location: editLocation,
+      locationEn: editLocationEn,
+      details: {
+        ...selectedProject.details,
+        area: editArea,
+        material: editMaterial,
+        tectonics: editTectonics
+      }
+    };
+
+    setProjects(prev => prev.map(p => p.id === selectedProject.id ? updated : p));
+    setSelectedProject(updated);
+    setIsEditingProj(false);
+
+    // Sync to Cloudflare D1
+    try {
+      await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+    } catch (err) {
+      console.warn("Could not sync edited project to Cloudflare D1:", err);
+    }
+  };
+
+  const handleDeleteProject = async (projId: string) => {
+    if (confirm(lang === 'ZH' ? '确定要删除此研究案卷吗？' : 'Are you sure you want to delete this study record?')) {
+      setProjects(prev => prev.filter(p => p.id !== projId));
+      setSelectedProject(null);
+
+      // Sync to Cloudflare D1
+      try {
+        await fetch(`/api/projects?id=${encodeURIComponent(projId)}`, {
+          method: 'DELETE'
+        });
+      } catch (err) {
+        console.warn("Could not delete project from Cloudflare D1:", err);
+      }
+    }
+  };
 
   // Filters compilation
   const getCompiledList = () => {
@@ -250,7 +410,6 @@ export default function App() {
   const openProjectOverview = (project: Project) => {
     setSelectedProject(project);
     setActivePhotoIndex(0);
-    setIsEditingProj(false);
     
     const welcome = lang === 'ZH' 
       ? `我是杨艺。关于《${project.title}》，我们可以探讨其在参数化形态力学或材料学层面的构想。`
@@ -332,131 +491,7 @@ export default function App() {
     }, 350);
   };
 
-  const handleCreateNewWork = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!creationTitle.trim()) {
-      alert(lang === 'ZH' ? '请输入标题' : 'Empty Title.');
-      return;
-    }
 
-    const customWork: Project = {
-      id: `user-proj-${Date.now()}`,
-      title: creationTitle,
-      titleEn: creationTitleEn || creationTitle,
-      category: creationCategory,
-      location: creationLocation || (lang === 'ZH' ? '中国' : 'Shanghai'),
-      locationEn: creationLocationEn || 'Shanghai',
-      year: creationYear,
-      image: selectedPresetImage,
-      details: {
-        area: creationArea || '90㎡',
-        material: creationMaterial || (lang === 'ZH' ? '清水混凝土' : 'Raw Concrete'),
-        tectonics: creationTectonics || (lang === 'ZH' ? '形态参数自洽测试。' : 'Experimental self-supporting study.')
-      }
-    };
-
-    const sanitizedWork = sanitizeProject(customWork);
-    setProjects(prev => [sanitizedWork, ...prev]);
-    setIsCreateOpen(false);
-    setSelectedPresetImage('');
-    
-    setCreationTitle('');
-    setCreationTitleEn('');
-    setCreationCategory('ARCHITECTURE');
-    setCreationLocation('');
-    setCreationLocationEn('');
-    setCreationArea('');
-    setCreationMaterial('');
-    setCreationTectonics('');
-  };
-
-  const archiveItem = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    executeAdminAction(() => {
-      if (confirm(lang === 'ZH' ? '确认移除该研究项目？' : 'Archive this study?')) {
-        setProjects(prev => prev.filter(p => p.id !== id));
-        if (selectedProject?.id === id) setSelectedProject(null);
-      }
-    });
-  };
-
-  const handleSaveEdit = () => {
-    if (!selectedProject) return;
-    executeAdminAction(() => {
-      const updated = {
-        ...selectedProject,
-        title: editTitle,
-        titleEn: editTitleEn,
-        year: editYear,
-        location: editLocation,
-        locationEn: editLocationEn,
-        details: {
-          area: editArea,
-          material: editMaterial,
-          tectonics: editTectonics
-        }
-      };
-      setProjects(prev => prev.map(p => p.id === selectedProject.id ? updated : p));
-      setSelectedProject(updated);
-      setIsEditingProj(false);
-    });
-  };
-
-  const handleUploadProjectImage = (projectId: string, file: File, index?: number) => {
-    executeAdminAction(() => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
-        if (!dataUrl) return;
-
-        setProjects(prev => prev.map(p => {
-          if (p.id === projectId) {
-            if (typeof index === 'number' && p.images && p.images.length > 0) {
-              const updatedImages = [...p.images];
-              updatedImages[index] = dataUrl;
-              return { ...p, image: index === 0 ? dataUrl : p.image, images: updatedImages };
-            } else {
-              const updatedImages = p.images && p.images.length > 0 ? [...p.images] : [dataUrl];
-              updatedImages[0] = dataUrl;
-              return {
-                ...p,
-                image: dataUrl,
-                images: updatedImages
-              };
-            }
-          }
-          return p;
-        }));
-
-        // Update active selected modal project too
-        setSelectedProject(prev => {
-          if (!prev || prev.id !== projectId) return prev;
-          if (typeof index === 'number' && prev.images && prev.images.length > 0) {
-            const updatedImages = [...prev.images];
-            updatedImages[index] = dataUrl;
-            return { ...prev, image: index === 0 ? dataUrl : prev.image, images: updatedImages };
-          } else {
-            const updatedImages = prev.images && prev.images.length > 0 ? [...prev.images] : [dataUrl];
-            updatedImages[0] = dataUrl;
-            return {
-              ...prev,
-              image: dataUrl,
-              images: updatedImages
-            };
-          }
-        });
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const PRESETS = [
-    'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1600585154526-990dced4db0d?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1544984243-ec57ea16fe25?auto=format&fit=crop&q=80&w=800'
-  ];
 
   const QUICK_TOPICS = lang === 'ZH' ? [
     '它的受力与连续构造如何？',
@@ -510,58 +545,13 @@ export default function App() {
           ))}
         </nav>
 
-        {/* INTERACTION: LANG, LOCK & ADD */}
-        <div className="flex items-center gap-3 text-[10px] tracking-widest font-semibold uppercase">
-          
-          <button
-            onClick={() => {
-              if (isAdmin) {
-                setNewPinInput('');
-                setConfirmPinInput('');
-                setPinChangeError('');
-                setShowPinChangeModal(true);
-              } else {
-                executeAdminAction(() => {});
-              }
-            }}
-            className={`flex items-center gap-1 px-2 py-0.5 border transition-all ${
-              isAdmin 
-                ? 'text-emerald-700 bg-slate-100 border-emerald-300' 
-                : 'text-[#8c887a] bg-[#faf9f6] border-black/5 hover:border-black/20'
-            }`}
-            title={isAdmin ? (lang === 'ZH' ? "管理员模式已解锁（点击修改密码）" : "Admin unlocked (Click to change password)") : (lang === 'ZH' ? "点击验证管理员口令" : "Click to authenticate")}
-          >
-            {isAdmin ? <Unlock className="w-2.5 h-2.5" /> : <Lock className="w-2.5 h-2.5" />}
-            <span>{isAdmin ? (lang === 'ZH' ? '管理员' : 'ADMIN') : (lang === 'ZH' ? '访客' : 'GUEST')}</span>
-          </button>
-
-          {isAdmin && (
-            <button
-              onClick={() => {
-                sessionStorage.removeItem('unpolished_is_admin');
-                setIsAdmin(false);
-              }}
-              className="text-[#8c887a] hover:text-black transition-colors"
-              title={lang === 'ZH' ? "登出管理员" : "Logout"}
-            >
-              [ {lang === 'ZH' ? '登出' : 'CLOSE'} ]
-            </button>
-          )}
-
-          <span>/</span>
-
+        {/* INTERACTION: LANG */}
+        <div className="flex items-center gap-3 text-[10px] tracking-widest font-semibold uppercase font-mono">
           <button 
             onClick={() => setLang(lang === 'ZH' ? 'EN' : 'ZH')}
-            className="hover:opacity-70 transition-opacity flex items-center gap-1"
+            className="hover:opacity-75 transition-opacity text-[#8c887a] hover:text-[#111112]"
           >
             {lang === 'ZH' ? 'ENGLISH' : '中文'}
-          </button>
-          <span>/</span>
-          <button
-            onClick={() => executeAdminAction(() => setIsCreateOpen(true))}
-            className="hover:opacity-70 transition-opacity flex items-center gap-1 text-[#111112] font-bold"
-          >
-            {lang === 'ZH' ? '新增研究' : 'ADD STUDY'}
           </button>
         </div>
 
@@ -569,8 +559,47 @@ export default function App() {
 
       {/* COMPACT FILTER SYSTEM: NO BORDERS, NO MESSY BOXES */}
       {activeCategory !== 'ABOUT' && (
-        <div className="px-8 mb-6 flex justify-end items-center animate-fade-in text-xs">
-          <div className="text-[10px] text-[#8c887a] tracking-[0.15em] uppercase font-mono">
+        <div className="px-8 mb-6 flex flex-wrap justify-between items-center gap-4 animate-fade-in text-xs">
+          {/* Admin Control Bar for high usability */}
+          <div className="flex items-center gap-3 font-mono text-[10px] tracking-widest text-[#8c887a] uppercase pb-1">
+            {isAdmin ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-emerald-700 font-bold flex items-center gap-1">
+                  <Unlock size={11} /> [ {lang === 'ZH' ? '研究模式' : 'ADMIN ACTIVE'} ]
+                </span>
+                <button
+                  onClick={() => setIsCreateOpen(true)}
+                  className="text-black hover:underline font-bold"
+                >
+                  {lang === 'ZH' ? '[ + 录入新研究项目 ]' : '[ + NEW STUDY ]'}
+                </button>
+                <button
+                  onClick={() => setShowPinChangeModal(true)}
+                  className="text-[#8c887a] hover:text-black hover:underline font-bold"
+                >
+                  {lang === 'ZH' ? '[ 修改密码 ]' : '[ CHANGE PASSWORD ]'}
+                </button>
+                <button
+                  onClick={() => {
+                    sessionStorage.removeItem('unpolished_is_admin');
+                    setIsAdmin(false);
+                  }}
+                  className="text-red-600 hover:underline font-bold"
+                >
+                  {lang === 'ZH' ? '[ 退出模式 ]' : '[ LOCK & EXIT ]'}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => executeAdminAction(() => {})}
+                className="hover:text-black transition-colors flex items-center gap-1 hover:underline font-bold"
+              >
+                <Lock size={10} /> {lang === 'ZH' ? '解锁研究所管理通道' : 'ADMIN PANEL UNLOCK'}
+              </button>
+            )}
+          </div>
+
+          <div className="text-[10px] text-[#8c887a] tracking-[0.15em] uppercase font-mono ml-auto">
             {lang === 'ZH' ? `存入研究：${getCompiledList().length} 组` : `INDEX COUNT: ${getCompiledList().length}`}
           </div>
         </div>
@@ -586,94 +615,81 @@ export default function App() {
             {/* Typography Section */}
             <div className="flex flex-col gap-6 font-mono text-[11px] leading-relaxed text-[#706a5e]">
               <div className="flex justify-between items-baseline border-b border-black/10 pb-3">
-                <span className="text-[#111112] font-semibold text-xs tracking-wider">
-                  {lang === 'ZH' ? aboutNameZh : aboutNameEn}
-                </span>
+                {isEditingAbout ? (
+                  <div className="flex-1 space-y-2 max-w-md">
+                    <input
+                      type="text"
+                      value={tempAboutNameZh}
+                      onChange={(e) => setTempAboutNameZh(e.target.value)}
+                      placeholder="名字 (中文)"
+                      className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                    />
+                    <input
+                      type="text"
+                      value={tempAboutNameEn}
+                      onChange={(e) => setTempAboutNameEn(e.target.value)}
+                      placeholder="Name (English)"
+                      className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                    />
+                  </div>
+                ) : (
+                  <span className="text-[#111112] font-semibold text-xs tracking-wider">
+                    {lang === 'ZH' ? aboutNameZh : aboutNameEn}
+                  </span>
+                )}
+                
                 {isAdmin && (
                   <button
                     onClick={() => {
-                      if (!isEditingAbout) {
+                      if (isEditingAbout) {
+                        setIsEditingAbout(false);
+                      } else {
                         setTempAboutNameZh(aboutNameZh);
                         setTempAboutNameEn(aboutNameEn);
                         setTempAboutBioZh(aboutBioZh);
                         setTempAboutBioEn(aboutBioEn);
                         setIsEditingAbout(true);
-                      } else {
-                        setIsEditingAbout(false);
                       }
                     }}
-                    className="border border-[#111112]/20 hover:border-[#111112] hover:bg-[#111112]/5 px-2.5 py-1 text-[9px] uppercase tracking-wider font-extrabold select-none whitespace-nowrap transition-colors"
+                    className="border border-[#111112]/20 hover:border-[#111112] px-2.5 py-1 text-[9px] uppercase tracking-wider font-extrabold ml-4 whitespace-nowrap"
                   >
-                    {isEditingAbout ? (lang === 'ZH' ? '退出编辑' : 'EXIT EDIT') : (lang === 'ZH' ? '修改个人简介' : 'EDIT BIO')}
+                    {isEditingAbout ? (lang === 'ZH' ? '取消' : 'CANCEL') : (lang === 'ZH' ? '修改文字' : 'EDIT BIOGRAPHY')}
                   </button>
                 )}
               </div>
 
               {isEditingAbout ? (
-                <div className="space-y-4 pt-2 font-mono text-[#111112]">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">中文姓名 / 称呼 (Name CN)</label>
-                      <input
-                        type="text"
-                        value={tempAboutNameZh}
-                        onChange={(e) => setTempAboutNameZh(e.target.value)}
-                        className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">英文姓名 / 称呼 (Name EN)</label>
-                      <input
-                        type="text"
-                        value={tempAboutNameEn}
-                        onChange={(e) => setTempAboutNameEn(e.target.value)}
-                        className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">中文自述简介 (Bio CN)</label>
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block">中文自传</label>
                     <textarea
                       value={tempAboutBioZh}
                       onChange={(e) => setTempAboutBioZh(e.target.value)}
-                      rows={6}
-                      className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-black outline-none font-mono resize-none leading-relaxed"
+                      rows={5}
+                      className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-[#111112] outline-none font-mono resize-none leading-relaxed"
                     />
                   </div>
-
-                  <div>
-                    <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">英文自述简介 (Bio EN)</label>
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block">English Biography</label>
                     <textarea
                       value={tempAboutBioEn}
                       onChange={(e) => setTempAboutBioEn(e.target.value)}
-                      rows={6}
-                      className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-black outline-none font-mono resize-none leading-relaxed"
+                      rows={5}
+                      className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-[#111112] outline-none font-mono resize-none leading-relaxed"
                     />
                   </div>
-
-                  <div className="pt-2 flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingAbout(false)}
-                      className="w-1/3 border border-black/15 py-2 text-[10px] hover:bg-black/5 uppercase tracking-widest font-bold"
-                    >
-                      {lang === 'ZH' ? '取消' : 'CANCEL'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAboutNameZh(tempAboutNameZh);
-                        setAboutNameEn(tempAboutNameEn);
-                        setAboutBioZh(tempAboutBioZh);
-                        setAboutBioEn(tempAboutBioEn);
-                        setIsEditingAbout(false);
-                      }}
-                      className="flex-1 bg-black text-white hover:bg-black/90 py-2 text-[10px] uppercase tracking-widest font-bold transition-colors"
-                    >
-                      {lang === 'ZH' ? '确认并保存关于说明' : 'SAVE ABOUT CHANGES'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => {
+                      setAboutNameZh(tempAboutNameZh || aboutNameZh);
+                      setAboutNameEn(tempAboutNameEn || aboutNameEn);
+                      setAboutBioZh(tempAboutBioZh || aboutBioZh);
+                      setAboutBioEn(tempAboutBioEn || aboutBioEn);
+                      setIsEditingAbout(false);
+                    }}
+                    className="w-full bg-black text-white hover:bg-black/90 py-2 text-[10px] uppercase tracking-widest font-bold font-mono"
+                  >
+                    {lang === 'ZH' ? '保存自传' : 'SAVE BIOGRAPHY'}
+                  </button>
                 </div>
               ) : (
                 <div className="whitespace-pre-line leading-relaxed text-[11px] space-y-4">
@@ -700,12 +716,6 @@ export default function App() {
                     ? '“不成器”研究所目前暂无研究案卷。' 
                     : 'The "Unpolished Studio" currently has no research records.'}
                 </p>
-                <button 
-                  onClick={() => executeAdminAction(() => setIsCreateOpen(true))}
-                  className="mt-2 border border-black/10 hover:border-black text-black px-4 py-2 hover:bg-black/5 transition-all text-[10px] tracking-widest font-bold uppercase"
-                >
-                  {lang === 'ZH' ? '点击此处 新增研究' : 'CREATE FIRST STUDY'}
-                </button>
               </div>
             ) : getCompiledList().length === 0 ? (
               <div className="py-24 text-center font-mono text-xs text-[#8c887a]">
@@ -720,8 +730,6 @@ export default function App() {
               <div className="flex flex-col gap-20 md:gap-28 animate-fade-in items-center">
                 {getCompiledList().map((proj) => {
                   if (!proj || !proj.id) return null;
-                  const isUserProj = typeof proj.id === 'string' && proj.id.startsWith('user-proj-');
-                  const canArchive = isUserProj || isAdmin;
                   return (
                     <div
                       key={proj.id}
@@ -729,17 +737,6 @@ export default function App() {
                       className="group cursor-pointer flex flex-col gap-4 relative w-full max-w-2xl md:max-w-3xl"
                     >
                       
-                      {/* Delete capability for administrators only to maintain pristine client experience for guests */}
-                      {isAdmin && (
-                        <button
-                          onClick={(e) => archiveItem(proj.id, e)}
-                          className="absolute top-4 right-4 bg-white/95 text-red-600 border border-red-500/10 hover:bg-red-500 hover:text-white px-2 py-1 transition-all z-20 font-mono text-[10px] tracking-widest font-semibold uppercase"
-                          title={lang === 'ZH' ? "删除文章" : "Delete Article"}
-                        >
-                          {lang === 'ZH' ? '删除' : 'DELETE'}
-                        </button>
-                      )}
-
                       {/* Image visual without unnecessary borders or decorative boxes */}
                       <div className="aspect-[3/2] w-full overflow-hidden bg-[#f3f0e8] relative transition-transform duration-700 ease-out group-hover:scale-[1.01] flex items-center justify-center border border-black/5">
                         {proj.image ? (
@@ -755,25 +752,6 @@ export default function App() {
                               {lang === 'ZH' ? '暂无效果图' : 'NO SCHEME RENDERING'}
                             </span>
                           </div>
-                        )}
-
-                        {/* Upload/Replace Button Overlay - admins only */}
-                        {isAdmin && (
-                          <label 
-                            onClick={(e) => e.stopPropagation()} 
-                            className="absolute right-3 bottom-3 bg-white/90 text-black hover:bg-black hover:text-white px-2 py-1 text-[9px] uppercase tracking-wider font-bold shadow-sm transition-all cursor-pointer select-none"
-                          >
-                            {proj.image ? (lang === 'ZH' ? '更换图片' : 'CHANGE IMAGE') : (lang === 'ZH' ? '选择图片' : 'SELECT IMAGE')}
-                            <input 
-                              type="file" 
-                              accept="image/*" 
-                              className="hidden" 
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleUploadProjectImage(proj.id, file);
-                              }}
-                            />
-                          </label>
                         )}
                       </div>
 
@@ -799,16 +777,310 @@ export default function App() {
 
       </main>
 
+
+        {/* DETAIL OVERVIEW PANEL - EXTREMELY MINIMAL */}
+      {selectedProject && (
+        <div className="fixed inset-0 z-50 bg-[#111112]/35 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-[#faf9f6] border border-black/10 max-h-[90vh] flex flex-col overflow-hidden animate-fade-in font-mono text-xs">
+            
+            {/* Blueprint specification section */}
+            <div className="w-full p-6 md:p-8 flex flex-col justify-between overflow-y-auto">
+              
+              <div className="space-y-6">
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex-1">
+                    <span className="text-[10px] text-[#8c887a] block tracking-wide">[ e-{String(selectedProject.id || '').substring(0,4)} ]</span>
+                    <h3 className="text-sm font-bold text-black tracking-widest uppercase mt-0.5">
+                      {lang === 'ZH' ? (selectedProject.title || '') : (selectedProject.titleEn || '')}
+                    </h3>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <div className="aspect-[3/2] overflow-hidden bg-[#f3f0e8] relative group/img flex items-center justify-center border border-black/5">
+                    {((selectedProject.images && selectedProject.images.length > 0) || selectedProject.image) ? (
+                      <img 
+                        src={selectedProject.images && selectedProject.images.length > 0 ? selectedProject.images[activePhotoIndex] : selectedProject.image} 
+                        className="w-full h-full object-cover grayscale transition-all duration-300 hover:grayscale-0" 
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center text-center p-6 gap-2 text-[#8c887a]">
+                        <span className="text-xl font-light">＋</span>
+                        <span className="text-[9px] uppercase tracking-widest font-mono font-bold">
+                          {lang === 'ZH' ? '暂无平面/效果图' : 'NO IMAGES YET'}
+                        </span>
+                      </div>
+                    )}
+                    
+                    {selectedProject.images && selectedProject.images.length > 1 && (
+                      <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5 z-10">
+                        {selectedProject.images.map((_, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setActivePhotoIndex(idx)}
+                            className={`w-1.5 h-1.5 rounded-full transition-all ${
+                              activePhotoIndex === idx ? 'bg-black w-3' : 'bg-black/30 hover:bg-black/65'
+                            }`}
+                            title={`Slide ${idx + 1}`}
+                          />
+                        ))}
+                       </div>
+                    )}
+                  </div>
+
+                  {selectedProject.images && selectedProject.images.length > 1 && (
+                    <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-[#8c887a] px-0.5 font-mono">
+                      <span>{lang === 'ZH' ? '切换细节效果图' : 'SWITCH RENDERING DETAIL'}</span>
+                      <span>{activePhotoIndex + 1} / {selectedProject.images.length}</span>
+                    </div>
+                  )}
+
+                  {isAdmin && (
+                    <div className="pt-2 flex flex-col gap-2 font-mono">
+                      <div className="flex gap-2">
+                        <label className="border border-black/10 hover:border-black px-2 py-1.5 text-[9px] uppercase tracking-wider cursor-pointer flex-1 text-center bg-white font-bold select-none text-black">
+                          {lang === 'ZH' ? '+ 上传自定义细节效果图' : '+ ADD PHOTO SLIDE'}
+                          <input
+                            type="file"
+                            multiple
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const files = e.target.files;
+                              if (files) {
+                                try {
+                                  const promises = Array.from(files).map((f: any) => uploadImageFile(f));
+                                  const urls = await Promise.all(promises);
+                                  
+                                  const updatedProj = {
+                                    ...selectedProject,
+                                    images: [...(selectedProject.images || [selectedProject.image]), ...urls]
+                                  };
+                                  
+                                  setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProj : p));
+                                  setSelectedProject(updatedProj);
+                                  setActivePhotoIndex((selectedProject.images?.length || 0));
+
+                                  // Sync addition to Cloudflare D1
+                                  await fetch('/api/projects', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(updatedProj)
+                                  });
+                                } catch (err) {
+                                  console.error("Failed uploading details", err);
+                                }
+                              }
+                            }}
+                          />
+                        </label>
+                        {selectedProject.images && selectedProject.images.length > 1 && (
+                          <button
+                            onClick={async () => {
+                              const curImages = [...selectedProject.images!];
+                              curImages.splice(activePhotoIndex, 1);
+                              const updatedProj = {
+                                ...selectedProject,
+                                image: curImages[0] || '',
+                                images: curImages
+                              };
+                              setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProj : p));
+                              setSelectedProject(updatedProj);
+                              setActivePhotoIndex(Math.max(0, activePhotoIndex - 1));
+
+                              // Sync slide removal to Cloudflare D1
+                              try {
+                                await fetch('/api/projects', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify(updatedProj)
+                                });
+                              } catch (err) {
+                                console.error("Could not sync slide deletion to Cloudflare D1:", err);
+                              }
+                            }}
+                            className="border border-red-200 text-red-600 hover:bg-red-50 px-3 py-1.5 text-[9px] uppercase tracking-wider font-bold"
+                          >
+                            {lang === 'ZH' ? '删除当前页' : 'DELETE SLIDE'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Plain list text fields or Interactive editor inputs */}
+                {isEditingProj ? (
+                  <div className="space-y-4 pt-4 border-t border-black/10 font-mono text-[#111112]">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">中文标题</label>
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">English Title</label>
+                        <input
+                          type="text"
+                          value={editTitleEn}
+                          onChange={(e) => setEditTitleEn(e.target.value)}
+                          className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">年份 (Year)</label>
+                        <input
+                          type="text"
+                          value={editYear}
+                          onChange={(e) => setEditYear(e.target.value)}
+                          className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">中文地点</label>
+                        <input
+                          type="text"
+                          value={editLocation}
+                          onChange={(e) => setEditLocation(e.target.value)}
+                          className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">Location (En)</label>
+                        <input
+                          type="text"
+                          value={editLocationEn}
+                          onChange={(e) => setEditLocationEn(e.target.value)}
+                          className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">材质机制 (Materiality)</label>
+                      <input
+                        type="text"
+                        value={editMaterial}
+                        onChange={(e) => setEditMaterial(e.target.value)}
+                        className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">构造主旨阐述 (Tectonic Thesis)</label>
+                      <textarea
+                        value={editTectonics}
+                        onChange={(e) => setEditTectonics(e.target.value)}
+                        rows={4}
+                        className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-[#111112] outline-none font-mono resize-none leading-relaxed"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">体量尺寸 (Scale/Area)</label>
+                      <input
+                        type="text"
+                        value={editArea}
+                        onChange={(e) => setEditArea(e.target.value)}
+                        className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-[#111112] outline-none font-mono"
+                      />
+                    </div>
+
+                    <div className="pt-2 flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingProj(false)}
+                        className="w-1/3 border border-black/15 py-2 text-[10px] hover:bg-black/5 uppercase tracking-widest font-bold"
+                      >
+                        {lang === 'ZH' ? '取消' : 'CANCEL'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveEdit}
+                        className="flex-1 bg-black text-white hover:bg-black/90 py-2 text-[10px] uppercase tracking-widest font-bold"
+                      >
+                        {lang === 'ZH' ? '确认保存' : 'SAVE CHANGES'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 text-[#706a5e] leading-relaxed font-mono mt-4 pt-4 border-t border-black/10">
+                    <div>
+                      <span className="text-[9px] text-[#8c887a] block uppercase tracking-wider font-mono">Materiality (材质机制)</span>
+                      <p className="text-[#111112] font-semibold">{selectedProject?.details?.material || ''}</p>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-[#8c887a] block uppercase tracking-wider font-mono">Tectonic Thesis (形态说明)</span>
+                      <p className="text-[#111112] leading-relaxed text-[11px] mt-0.5">{selectedProject?.details?.tectonics || ''}</p>
+                    </div>
+                    <div className="text-[10px] text-[#8c887a] font-mono">
+                      <span>{selectedProject?.details?.area || ''} — {lang === 'ZH' ? (selectedProject?.location || '') : (selectedProject?.locationEn || '')}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex gap-2 w-full font-mono font-bold">
+                <button 
+                  onClick={() => setSelectedProject(null)}
+                  className="flex-1 border border-black/15 py-2 text-center text-black/60 hover:text-black hover:border-black text-[10px] uppercase tracking-widest"
+                >
+                  {lang === 'ZH' ? '关闭' : 'CLOSE'}
+                </button>
+                {isAdmin && !isEditingProj && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditTitle(selectedProject.title || '');
+                        setEditTitleEn(selectedProject.titleEn || '');
+                        setEditYear(selectedProject.year || '');
+                        setEditLocation(selectedProject.location || '');
+                        setEditLocationEn(selectedProject.locationEn || '');
+                        setEditArea(selectedProject.details?.area || '');
+                        setEditMaterial(selectedProject.details?.material || '');
+                        setEditTectonics(selectedProject.details?.tectonics || '');
+                        setIsEditingProj(true);
+                      }}
+                      className="border border-black px-4 py-2 text-[10px] hover:bg-black hover:text-white transition-all text-black uppercase tracking-widest"
+                    >
+                      {lang === 'ZH' ? '编辑内容' : 'EDIT DETAIL'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProject(selectedProject.id)}
+                      className="border border-red-500 text-red-600 hover:bg-red-50 px-4 py-2 text-[10px] uppercase tracking-widest"
+                    >
+                      {lang === 'ZH' ? '物理删除' : 'DELETE'}
+                    </button>
+                  </>
+                )}
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* MODAL: ADD / NEW RESEARCH (Minimalist & Simple fields) */}
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 bg-[#111112]/30 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white p-8 flex flex-col gap-6 shadow-xl animate-fade-in font-mono text-xs">
+          <div className="w-full max-w-md bg-white p-8 flex flex-col gap-6 shadow-xl animate-fade-in font-mono text-xs border border-black/10 max-h-[90vh] overflow-y-auto">
             
             <div className="flex justify-between items-baseline">
               <h3 className="font-extrabold tracking-[0.15em] text-black uppercase">
                 {lang === 'ZH' ? '录入新研究项目' : 'NEW SCHOLARLY STUDY'}
               </h3>
-              <button onClick={() => setIsCreateOpen(false)} className="text-black/50 hover:text-black">
+              <button onClick={() => setIsCreateOpen(false)} className="text-black/50 hover:text-black font-bold">
                 [ × ]
               </button>
             </div>
@@ -876,6 +1148,26 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="block text-[9px] text-[#8c887a] uppercase tracking-wider">地点 (中文)</label>
+                  <input 
+                    type="text" placeholder="例如：伦敦"
+                    value={creationLocation} onChange={(e) => setCreationLocation(e.target.value)}
+                    className="w-full bg-transparent border-b border-black/10 py-1.5 focus:outline-none focus:border-black text-[11px]"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] text-[#8c887a] uppercase tracking-wider">Location (English)</label>
+                  <input 
+                    type="text" placeholder="e.g. London"
+                    value={creationLocationEn} onChange={(e) => setCreationLocationEn(e.target.value)}
+                    className="w-full bg-transparent border-b border-black/10 py-1.5 focus:outline-none focus:border-black text-[11px]"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <label className="block text-[9px] text-[#8c887a] uppercase tracking-wider">Thesis Detail (学术构造主旨)</label>
                 <textarea 
@@ -887,42 +1179,41 @@ export default function App() {
 
               <div className="space-y-1.5">
                 <div className="flex justify-between items-baseline">
-                  <label className="block text-[9px] text-[#8c887a] uppercase tracking-wider">Select Material Imagery</label>
-                  <label className="text-[9px] text-black hover:underline cursor-pointer font-bold">
-                    {lang === 'ZH' ? '[ 上传自定义图片 ]' : '[ UPLOAD PERSONAL ]'}
+                  <label className="block text-[9px] text-[#8c887a] uppercase tracking-wider font-bold">Select Preset Cover</label>
+                  <label className="text-[9px] text-[#8c887a] hover:text-black hover:underline cursor-pointer font-bold">
+                    {lang === 'ZH' ? '[ 上传自定义图片 ]' : '[ UPLOAD IMAGE ]'}
                     <input 
                       type="file" 
                       accept="image/*" 
                       className="hidden" 
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (ev) => {
-                            if (ev.target?.result) {
-                              setSelectedPresetImage(ev.target.result as string);
-                            }
-                          };
-                          reader.readAsDataURL(file);
+                          try {
+                            const url = await uploadImageFile(file);
+                            setSelectedPresetImage(url);
+                          } catch (err) {
+                            console.error("Upload failed", err);
+                          }
                         }
                       }}
                     />
                   </label>
                 </div>
                 {selectedPresetImage?.startsWith('data:image/') && (
-                  <div className="aspect-[3/1] overflow-hidden bg-gray-100 border border-black/10 relative">
+                  <div className="aspect-[3/1] overflow-hidden bg-gray-100 border border-black/10 relative my-1">
                     <img src={selectedPresetImage} className="w-full h-full object-cover grayscale" />
                     <span className="absolute bottom-1 right-2 bg-black text-white text-[7px] tracking-widest px-1 py-0.5 uppercase">
                       {lang === 'ZH' ? '自定义图片已就绪' : 'CUSTOM UPLOAD ACTIVE'}
                     </span>
                   </div>
                 )}
-                <div className="grid grid-cols-5 gap-1">
+                <div className="grid grid-cols-5 gap-1 pt-1">
                   {PRESETS.map((url, i) => (
                     <button
                       key={i} type="button" onClick={() => setSelectedPresetImage(url)}
-                      className={`aspect-square overflow-hidden bg-gray-100 ${
-                        selectedPresetImage === url ? 'ring-1 ring-black' : 'opacity-60'
+                      className={`aspect-square overflow-hidden bg-gray-100 border ${
+                        selectedPresetImage === url ? 'border-black opacity-100 scale-[1.05]' : 'border-transparent opacity-60 hover:opacity-85'
                       }`}
                     >
                       <img src={url} className="w-full h-full object-cover grayscale" />
@@ -951,331 +1242,6 @@ export default function App() {
           </div>
         </div>
       )}
-        {/* DETAIL OVERVIEW PANEL - EXTREMELY MINIMAL */}
-      {selectedProject && (
-        <div className="fixed inset-0 z-50 bg-[#111112]/35 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-[#faf9f6] border border-black/10 max-h-[90vh] flex flex-col overflow-hidden animate-fade-in font-mono text-xs">
-            
-            {/* Blueprint specification section */}
-            <div className="w-full p-6 md:p-8 flex flex-col justify-between overflow-y-auto">
-              
-              <div className="space-y-6">
-                <div className="flex justify-between items-start gap-4">
-                  <div className="flex-1">
-                    <span className="text-[10px] text-[#8c887a] block tracking-wide">[ e-{String(selectedProject.id || '').substring(0,4)} ]</span>
-                    {isEditingProj ? (
-                      <span className="text-[10px] text-emerald-700 block font-bold tracking-widest uppercase mt-1">
-                        {lang === 'ZH' ? '正在编辑文章文本信息...' : 'EDITING FIELD SPECIFICATIONS...'}
-                      </span>
-                    ) : (
-                      <h3 className="text-sm font-bold text-black tracking-widest uppercase mt-0.5">
-                        {lang === 'ZH' ? (selectedProject.title || '') : (selectedProject.titleEn || '')}
-                      </h3>
-                    )}
-                  </div>
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        if (!isEditingProj) {
-                          setEditTitle(selectedProject.title || '');
-                          setEditTitleEn(selectedProject.titleEn || '');
-                          setEditYear(selectedProject.year || '');
-                          setEditLocation(selectedProject.location || '');
-                          setEditLocationEn(selectedProject.locationEn || '');
-                          setEditArea(selectedProject.details?.area || '');
-                          setEditMaterial(selectedProject.details?.material || '');
-                          setEditTectonics(selectedProject.details?.tectonics || '');
-                          setIsEditingProj(true);
-                        } else {
-                          setIsEditingProj(false);
-                        }
-                      }}
-                      className="border border-[#111112]/20 hover:border-[#111112] hover:bg-[#111112]/5 px-2.5 py-1 text-[9px] uppercase tracking-wider font-extrabold select-none whitespace-nowrap"
-                    >
-                      {isEditingProj ? (lang === 'ZH' ? '取消编辑' : 'CANCEL') : (lang === 'ZH' ? '修改文字' : 'EDIT TEXT')}
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <div className="aspect-[3/2] overflow-hidden bg-[#f3f0e8] relative group/img flex items-center justify-center border border-black/5">
-                    {((selectedProject.images && selectedProject.images.length > 0) || selectedProject.image) ? (
-                      <img 
-                        src={selectedProject.images && selectedProject.images.length > 0 ? selectedProject.images[activePhotoIndex] : selectedProject.image} 
-                        className="w-full h-full object-cover grayscale transition-all duration-300 hover:grayscale-0" 
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center text-center p-6 gap-2 text-[#8c887a]">
-                        <span className="text-xl font-light">＋</span>
-                        <span className="text-[9px] uppercase tracking-widest font-mono font-bold">
-                          {lang === 'ZH' ? '暂无平面/效果图，请在下方添加' : 'NO IMAGES YET. UPLOAD BELOW.'}
-                        </span>
-                      </div>
-                    )}
-                    
-                    {selectedProject.images && selectedProject.images.length > 1 && (
-                      <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5 z-10">
-                        {selectedProject.images.map((_, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => setActivePhotoIndex(idx)}
-                            className={`w-1.5 h-1.5 rounded-full transition-all ${
-                              activePhotoIndex === idx ? 'bg-black w-3' : 'bg-black/30 hover:bg-black/65'
-                            }`}
-                            title={`Slide ${idx + 1}`}
-                          />
-                        ))}
-                       </div>
-                    )}
-                  </div>
-
-                  {selectedProject.images && selectedProject.images.length > 1 && (
-                    <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-[#8c887a] px-0.5 font-mono">
-                      <span>{lang === 'ZH' ? '切换细节效果图' : 'SWITCH RENDERING DETAIL'}</span>
-                      <span>{activePhotoIndex + 1} / {selectedProject.images.length}</span>
-                    </div>
-                  )}
-
-                  {/* Multi-Photo Upload & Delete Controls in Detail Modal - admins only */}
-                  {isAdmin && (
-                    <div className="space-y-1.5 font-mono">
-                      <div className="flex gap-2">
-                        <label className="border border-black/10 hover:border-black px-2 py-1.5 text-[9px] uppercase tracking-wider cursor-pointer flex-1 text-center bg-white font-bold select-none text-black">
-                          {lang === 'ZH' ? '+ 多选/上传自定义效果图' : '+ ADD PHOTOS (MULTI)'}
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            multiple
-                            className="hidden" 
-                            onChange={(e) => {
-                              const files = e.target.files;
-                              if (files && files.length > 0) {
-                                setUploadError('');
-                                const filesArray = Array.from(files) as File[];
-                                const MAX_SIZE = 1000 * 1024; // 1MB size threshold limit check
-                                
-                                // filter out oversize warning
-                                const overSizedFiles = filesArray.filter(f => f.size > MAX_SIZE);
-                                const eligibleFiles = filesArray.filter(f => f.size <= MAX_SIZE);
-                                
-                                if (overSizedFiles.length > 0) {
-                                  const names = overSizedFiles.map(f => f.name).join(', ');
-                                  setUploadError(lang === 'ZH' 
-                                    ? `已忽略文件 (${names})。单张请勿超过 1MB，否则浏览器容易崩溃！`
-                                    : `Skipped ${names} as it exceeds 1MB limit.`
-                                  );
-                                }
-                                
-                                if (eligibleFiles.length === 0) return;
-                                
-                                executeAdminAction(() => {
-                                  const promises = eligibleFiles.map(file => {
-                                    return new Promise<string>((resolve) => {
-                                      const reader = new FileReader();
-                                      reader.onload = (ev) => {
-                                        resolve(ev.target?.result as string || '');
-                                      };
-                                      reader.readAsDataURL(file);
-                                    });
-                                  });
-                                  
-                                  Promise.all(promises).then(dataUrls => {
-                                    const validUrls = dataUrls.filter(url => !!url);
-                                    if (validUrls.length === 0) return;
-                                    
-                                    setProjects(prev => prev.map(p => {
-                                      if (p.id === selectedProject?.id) {
-                                        const currentImages = p.images ? [...p.images] : (p.image ? [p.image] : []);
-                                        const updated = [...currentImages, ...validUrls];
-                                        return { ...p, image: p.image || validUrls[0], images: updated };
-                                      }
-                                      return p;
-                                    }));
-                                    
-                                    setSelectedProject(prev => {
-                                      if (!prev) return null;
-                                      const currentImages = prev.images ? [...prev.images] : (prev.image ? [prev.image] : []);
-                                      const updated = [...currentImages, ...validUrls];
-                                      return { ...prev, image: prev.image || validUrls[0], images: updated };
-                                    });
-                                  });
-                                });
-                              }
-                            }}
-                          />
-                        </label>
-                        {((selectedProject.images && selectedProject.images.length > 0) || selectedProject.image) && (
-                          <button
-                            onClick={() => {
-                              executeAdminAction(() => {
-                                const updated = selectedProject.images ? selectedProject.images.filter((_, i) => i !== activePhotoIndex) : [];
-                                setProjects(prev => prev.map(p => {
-                                  if (p.id === selectedProject?.id) {
-                                    return { ...p, image: updated[0] || '', images: updated };
-                                  }
-                                  return p;
-                                }));
-                                setSelectedProject(prev => {
-                                  if (!prev) return null;
-                                  return { ...prev, image: updated[0] || '', images: updated };
-                                });
-                                setActivePhotoIndex(0);
-                              });
-                            }}
-                            className="border border-red-100 hover:border-red-500 text-red-500/80 hover:text-red-600 px-2 py-1.5 text-[9px] uppercase tracking-wider flex-1 text-center bg-white font-bold"
-                          >
-                            {lang === 'ZH' ? '删除当前页' : 'DELETE SLIDE'}
-                          </button>
-                        )}
-                      </div>
-
-                      <p className="text-[8px] text-[#8c887a] leading-relaxed font-mono">
-                        {lang === 'ZH' 
-                          ? '* 提示：已开启多选上传。建议单张限 1MB 以为佳（推荐 200KB-500KB 压缩格式），总数不限但受浏览器 5MB 限制限制。' 
-                          : '* Tip: Multi-file selection is active. Max 1MB per image (200-500KB compressed is recommended) due to browser 5MB localStorage capacity.'}
-                      </p>
-
-                      {uploadError && (
-                        <p className="text-[8px] text-red-600 font-bold bg-red-50 p-2 border border-red-200 leading-normal animate-fade-in font-mono mt-1">
-                          {uploadError}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                  {/* Plain list text fields or Interactive editor inputs */}
-                  {isEditingProj ? (
-                    <div className="space-y-4 pt-4 border-t border-black/10 font-mono text-[#111112]">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">中文标题 (Title CN)</label>
-                          <input
-                            type="text"
-                            value={editTitle}
-                            onChange={(e) => setEditTitle(e.target.value)}
-                            className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-black outline-none font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">英文标题 (Title EN)</label>
-                          <input
-                            type="text"
-                            value={editTitleEn}
-                            onChange={(e) => setEditTitleEn(e.target.value)}
-                            className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-black outline-none font-mono"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-3">
-                        <div>
-                          <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">年份 (Year)</label>
-                          <input
-                            type="text"
-                            value={editYear}
-                            onChange={(e) => setEditYear(e.target.value)}
-                            className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-black outline-none font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">中文地点 (Location CN)</label>
-                          <input
-                            type="text"
-                            value={editLocation}
-                            onChange={(e) => setEditLocation(e.target.value)}
-                            className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-black outline-none font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">英文地点 (Location EN)</label>
-                          <input
-                            type="text"
-                            value={editLocationEn}
-                            onChange={(e) => setEditLocationEn(e.target.value)}
-                            className="w-full bg-white border border-black/15 px-2 py-1 text-xs text-black focus:border-black outline-none font-mono"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">材质机制 (Materiality)</label>
-                        <input
-                          type="text"
-                          value={editMaterial}
-                          onChange={(e) => setEditMaterial(e.target.value)}
-                          className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-black outline-none font-mono"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">形态意图解释 (Tectonic Thesis)</label>
-                        <textarea
-                          value={editTectonics}
-                          onChange={(e) => setEditTectonics(e.target.value)}
-                          rows={4}
-                          className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-black focus:border-black outline-none font-mono resize-none leading-relaxed"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-[9px] text-[#8c887a] uppercase tracking-wider block mb-1">体量大小 (Area)</label>
-                          <input
-                            type="text"
-                            value={editArea}
-                            onChange={(e) => setEditArea(e.target.value)}
-                            className="w-full bg-white border border-black/15 px-2 py-1.5 text-xs text-[#111112] focus:border-black outline-none font-mono"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="pt-2 flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingProj(false)}
-                          className="w-1/3 border border-black/15 py-2 text-[10px] hover:bg-black/5 uppercase tracking-widest font-bold"
-                        >
-                          {lang === 'ZH' ? '取消' : 'CANCEL'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveEdit}
-                          className="flex-1 bg-black text-white hover:bg-black/90 py-2 text-[10px] uppercase tracking-widest font-bold"
-                        >
-                          {lang === 'ZH' ? '确认并保存修改' : 'SAVE CHANGES'}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-4 text-[#706a5e] leading-relaxed font-mono">
-                      <div>
-                        <span className="text-[9px] text-[#8c887a] block uppercase tracking-wider font-mono">Materiality (材质机制)</span>
-                        <p className="text-[#111112] font-semibold">{selectedProject?.details?.material || ''}</p>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-[#8c887a] block uppercase tracking-wider font-mono">Tectonic Thesis (形态说明)</span>
-                        <p className="text-[#111112] leading-relaxed text-[11px] mt-0.5">{selectedProject?.details?.tectonics || ''}</p>
-                      </div>
-                      <div className="text-[10px] text-[#8c887a] font-mono">
-                        <span>{selectedProject?.details?.area || ''} — {lang === 'ZH' ? (selectedProject?.location || '') : (selectedProject?.locationEn || '')}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-              <button 
-                onClick={() => setSelectedProject(null)}
-                className="mt-6 border border-black/15 py-1.5 text-center text-black/60 hover:text-black hover:border-black text-[10px] uppercase tracking-widest"
-              >
-                {lang === 'ZH' ? '关闭' : 'CLOSE'}
-              </button>
-
-            </div>
-
-          </div>
-        </div>
-      )}
 
       {/* MODAL: ADMIN AUTHENTICATION */}
       {showAuthModal && (
@@ -1295,8 +1261,8 @@ export default function App() {
 
             <p className="text-[#8c887a] text-[10px] leading-relaxed">
               {lang === 'ZH' 
-                ? '仅管理员（杨艺本人）可执行新增、修改或删除研究案卷。请输入对应的学术管理密码进行解锁。' 
-                : 'Only the administrator (Yang Yi) can add, modify, or archive research studies. Please enter the master password.'}
+                ? '仅管理员（杨艺本人）可执行新增、修改或物理删除案卷。请输入对应的密码解锁。' 
+                : 'Only the administrator (Yang Yi) can modify, edit or add research studies. Please enter password.'}
             </p>
 
             <div className="space-y-3">

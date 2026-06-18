@@ -3,10 +3,37 @@ interface Env {
   wanzhan2: R2Bucket;
 }
 
+async function ensureTable(db: D1Database) {
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        titleEn TEXT,
+        category TEXT,
+        location TEXT,
+        locationEn TEXT,
+        year TEXT,
+        image TEXT,
+        images TEXT,
+        area TEXT,
+        material TEXT,
+        tectonics TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+  } catch (err) {
+    console.error("D1 Init error:", err);
+  }
+}
+
 // 1. GET - Fetch and structure all research records
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { env } = context;
   try {
+    // Auto-migrate on request
+    await ensureTable(env.wanzhan);
+
     // Select from D1: env.wanzhan
     const { results } = await env.wanzhan
       .prepare("SELECT * FROM projects ORDER BY created_at DESC")
@@ -63,6 +90,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
   try {
+    await ensureTable(env.wanzhan);
     const body: any = await request.json();
 
     const {
